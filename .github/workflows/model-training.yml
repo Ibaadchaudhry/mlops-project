@@ -1,0 +1,514 @@
+name: FL Model Training & Retraining
+
+on:
+  # Manual trigger for training
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: 'Number of training rounds'
+        required: true
+        default: '10'
+        type: string
+      clients:
+        description: 'Number of clients'
+        required: true
+        default: '3'
+        type: string
+      force_retrain:
+        description: 'Force retrain even if no drift detected'
+        required: false
+        default: false
+        type: boolean
+
+  # Scheduled training (weekly)
+  schedule:
+    - cron: '0 2 * * 0'  # Every Sunday at 2 AM UTC
+
+  # Trigger on drift detection (webhook from monitoring system)
+  repository_dispatch:
+    types: [drift-detected, model-performance-degraded]
+
+env:
+  PYTHON_VERSION: 3.9
+  
+jobs:
+  # ================================
+  # CHECK TRAINING CONDITIONS
+  # ================================
+  check-conditions:
+    name: Check Training Conditions
+    runs-on: ubuntu-latest
+    outputs:
+      should_train: ${{ steps.decision.outputs.should_train }}
+      reason: ${{ steps.decision.outputs.reason }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Check if retraining is needed
+      id: decision
+      run: |
+        python -c "
+        import os
+        import json
+        import glob
+        from datetime import datetime, timedelta
+        
+        should_train = False
+        reason = 'No training needed'
+        
+        # Check for manual trigger
+        if '${{ github.event_name }}' == 'workflow_dispatch':
+            if '${{ github.event.inputs.force_retrain }}' == 'true':
+                should_train = True
+                reason = 'Manual force retrain requested'
+            else:
+                should_train = True
+                reason = 'Manual training requested'
+        
+        # Check for drift detection trigger
+        elif '${{ github.event_name }}' == 'repository_dispatch':
+            should_train = True
+            reason = 'Triggered by ${{ github.event.action }}'
+        
+        # Check for scheduled training
+        elif '${{ github.event_name }}' == 'schedule':
+            should_train = True
+            reason = 'Scheduled weekly training'
+        
+        # Additional checks for automatic retraining
+        else:
+            # Check if drift reports indicate significant drift
+            try:
+                drift_files = glob.glob('drift_reports/*.csv')
+                if drift_files:
+                    import pandas as pd
+                    recent_drifts = 0
+                    for file in drift_files[-10:]:  # Check last 10 reports
+                        df = pd.read_csv(file)
+                        if 'drift_flag' in df.columns:
+                            recent_drifts += df['drift_flag'].sum()
+                    
+                    if recent_drifts > 5:  # Threshold for automatic retraining
+                        should_train = True
+                        reason = f'Significant drift detected ({recent_drifts} features flagged)'
+            except Exception as e:
+                print(f'Warning: Could not check drift files: {e}')
+            
+            # Check model age
+            try:
+                if os.path.exists('models/metrics_history.json'):
+                    with open('models/metrics_history.json', 'r') as f:
+                        history = json.load(f)
+                    if history:
+                        # Check if model performance is degrading
+                        recent_metrics = history[-3:] if len(history) >= 3 else history
+                        if len(recent_metrics) > 1:
+                            auc_trend = [m.get('metrics', {}).get('auc', 0) for m in recent_metrics]
+                            if auc_trend[-1] < auc_trend[0] - 0.05:  # 5% performance drop
+                                should_train = True
+                                reason = 'Model performance degradation detected'
+            except Exception as e:
+                print(f'Warning: Could not check model metrics: {e}')
+        
+        print(f'Decision: should_train={should_train}, reason={reason}')
+        print(f'::set-output name=should_train::{should_train}')
+        print(f'::set-output name=reason::{reason}')
+        "
+
+    - name: Training decision summary
+      run: |
+        echo "🤖 Training Decision Summary"
+        echo "Should train: ${{ steps.decision.outputs.should_train }}"
+        echo "Reason: ${{ steps.decision.outputs.reason }}"
+
+  # ================================
+  # FEDERATED LEARNING TRAINING
+  # ================================
+  train-model:
+    name: Train FL Model
+    runs-on: ubuntu-latest
+    needs: check-conditions
+    if: needs.check-conditions.outputs.should_train == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Prepare training data
+      run: |
+        echo "📊 Preparing federated datasets..."
+        python save_clients.py
+
+    - name: Run federated learning training
+      run: |
+        echo "🚀 Starting federated learning training..."
+        rounds=${{ github.event.inputs.rounds || '10' }}
+        clients=${{ github.event.inputs.clients || '3' }}
+        
+        echo "Training configuration:"
+        echo "  - Rounds: $rounds"
+        echo "  - Clients: $clients"
+        echo "  - Trigger: ${{ needs.check-conditions.outputs.reason }}"
+        
+        # Create training script
+        cat > train_job.py << 'EOF'
+import os
+import sys
+import multiprocessing
+from fl_server import start_flower_server, start_client_process
+import pickle
+import time
+import signal
+
+def training_job(rounds, num_clients):
+    # Load client datasets
+    with open("client_datasets.pkl", "rb") as f:
+        client_datasets = pickle.load(f)
+    
+    # Get input dimension
+    any_ds = next(iter(client_datasets.values()))
+    input_dim = any_ds["X_train_norm"].shape[1]
+    
+    print(f"Starting FL training: {rounds} rounds, {num_clients} clients, input_dim={input_dim}")
+    
+    # Start server
+    server_proc = multiprocessing.Process(
+        target=start_flower_server, 
+        args=(rounds, num_clients)
+    )
+    server_proc.start()
+    
+    # Wait a bit for server to start
+    time.sleep(3)
+    
+    # Start clients
+    client_procs = []
+    for cid in range(min(num_clients, len(client_datasets))):
+        client_data = client_datasets[cid]
+        p = multiprocessing.Process(
+            target=start_client_process,
+            args=(cid, client_data, input_dim)
+        )
+        p.start()
+        client_procs.append(p)
+    
+    # Wait for clients to finish
+    for p in client_procs:
+        p.join()
+    
+    # Wait for server
+    server_proc.join()
+    
+    print("FL training completed!")
+
+if __name__ == "__main__":
+    multiprocessing.set_start_method("spawn", force=True)
+    rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+    clients = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+    training_job(rounds, clients)
+EOF
+        
+        # Run training with timeout
+        timeout 1800 python train_job.py $rounds $clients || {
+            echo "❌ Training timed out or failed"
+            exit 1
+        }
+
+    - name: Validate training results
+      run: |
+        echo "🔍 Validating training results..."
+        
+        python -c "
+        import os
+        import json
+        import glob
+        
+        # Check if models were created
+        model_files = glob.glob('models/*.pt')
+        if not model_files:
+            raise Exception('No model files found after training')
+        
+        print(f'✅ Found {len(model_files)} model files')
+        
+        # Check if metrics history exists and has new entries
+        if os.path.exists('models/metrics_history.json'):
+            with open('models/metrics_history.json', 'r') as f:
+                history = json.load(f)
+            if history and len(history) > 0:
+                latest = history[-1]
+                auc = latest.get('metrics', {}).get('auc', 0)
+                acc = latest.get('metrics', {}).get('accuracy', 0)
+                print(f'✅ Latest metrics: AUC={auc:.4f}, Accuracy={acc:.4f}')
+                
+                if auc < 0.7:
+                    print('⚠️ Warning: AUC below 0.7')
+                if acc < 0.7:
+                    print('⚠️ Warning: Accuracy below 0.7')
+            else:
+                raise Exception('No metrics found in history')
+        else:
+            raise Exception('No metrics history file found')
+        
+        # Check drift reports
+        drift_files = glob.glob('drift_reports/*.csv')
+        print(f'✅ Found {len(drift_files)} drift reports')
+        
+        print('🎉 Training validation completed successfully!')
+        "
+
+    - name: Archive training artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: training-artifacts-${{ github.run_id }}
+        path: |
+          models/
+          drift_reports/
+          client_datasets.pkl
+        retention-days: 30
+
+    - name: Update model registry
+      run: |
+        echo "📝 Updating model registry..."
+        
+        # Create model registry entry
+        python -c "
+        import json
+        import os
+        from datetime import datetime
+        import glob
+        
+        # Load existing registry or create new
+        registry_file = 'model_registry.json'
+        registry = []
+        if os.path.exists(registry_file):
+            with open(registry_file, 'r') as f:
+                registry = json.load(f)
+        
+        # Get latest model info
+        model_files = sorted(glob.glob('models/*.pt'))
+        if model_files:
+            latest_model = model_files[-1]
+            
+            # Get metrics
+            metrics = {}
+            if os.path.exists('models/metrics_history.json'):
+                with open('models/metrics_history.json', 'r') as f:
+                    history = json.load(f)
+                if history:
+                    metrics = history[-1].get('metrics', {})
+            
+            # Add registry entry
+            entry = {
+                'version': f'v{len(registry) + 1}',
+                'timestamp': datetime.now().isoformat(),
+                'model_path': latest_model,
+                'metrics': metrics,
+                'trigger': '${{ needs.check-conditions.outputs.reason }}',
+                'commit_sha': '${{ github.sha }}',
+                'rounds': '${{ github.event.inputs.rounds || \"10\" }}',
+                'clients': '${{ github.event.inputs.clients || \"3\" }}'
+            }
+            
+            registry.append(entry)
+            
+            # Save updated registry
+            with open(registry_file, 'w') as f:
+                json.dump(registry, f, indent=2)
+            
+            print(f'✅ Added model {entry[\"version\"]} to registry')
+        "
+
+  # ================================
+  # MODEL VALIDATION & TESTING
+  # ================================
+  validate-model:
+    name: Validate Trained Model
+    runs-on: ubuntu-latest
+    needs: train-model
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Download training artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: training-artifacts-${{ github.run_id }}
+
+    - name: Run model validation tests
+      run: |
+        echo "🧪 Running model validation tests..."
+        
+        python -c "
+        import torch
+        import pickle
+        import glob
+        import json
+        from model import TabularMLP
+        from train_utils import evaluate_model
+        import numpy as np
+        
+        # Load latest model
+        model_files = sorted(glob.glob('models/*.pt'))
+        if not model_files:
+            raise Exception('No model files found')
+        
+        latest_model_path = model_files[-1]
+        print(f'Testing model: {latest_model_path}')
+        
+        # Load model
+        state_dict = torch.load(latest_model_path, map_location='cpu')
+        
+        # Determine input dimension
+        for tensor in state_dict.values():
+            if tensor.ndim == 2:
+                input_dim = tensor.shape[1]
+                break
+        
+        model = TabularMLP(input_dim=input_dim)
+        model.load_state_dict(state_dict)
+        model.eval()
+        
+        print(f'✅ Model loaded successfully with input_dim={input_dim}')
+        
+        # Load test data
+        with open('client_datasets.pkl', 'rb') as f:
+            client_datasets = pickle.load(f)
+        
+        # Test on each client's test set
+        all_aucs = []
+        all_accs = []
+        
+        for cid, data in client_datasets.items():
+            X_test = data['X_test_norm']
+            y_test = data['y_test']
+            
+            metrics = evaluate_model(model, X_test, y_test)
+            auc = metrics.get('auc')
+            acc = metrics.get('accuracy')
+            
+            if auc is not None:
+                all_aucs.append(auc)
+            if acc is not None:
+                all_accs.append(acc)
+            
+            print(f'Client {cid}: AUC={auc:.4f}, Accuracy={acc:.4f}')
+        
+        # Overall validation
+        avg_auc = np.mean(all_aucs) if all_aucs else 0
+        avg_acc = np.mean(all_accs) if all_accs else 0
+        
+        print(f'\\n🎯 Overall Performance:')
+        print(f'   Average AUC: {avg_auc:.4f}')
+        print(f'   Average Accuracy: {avg_acc:.4f}')
+        
+        # Validation thresholds
+        if avg_auc < 0.7:
+            raise Exception(f'Model validation failed: AUC ({avg_auc:.4f}) below threshold (0.7)')
+        if avg_acc < 0.7:
+            raise Exception(f'Model validation failed: Accuracy ({avg_acc:.4f}) below threshold (0.7)')
+        
+        print('✅ Model validation passed!')
+        
+        # Save validation report
+        validation_report = {
+            'model_path': latest_model_path,
+            'validation_timestamp': '$(date -Iseconds)',
+            'average_auc': float(avg_auc),
+            'average_accuracy': float(avg_acc),
+            'per_client_metrics': {
+                str(cid): {
+                    'auc': float(evaluate_model(model, data['X_test_norm'], data['y_test'])['auc'] or 0),
+                    'accuracy': float(evaluate_model(model, data['X_test_norm'], data['y_test'])['accuracy'] or 0)
+                }
+                for cid, data in client_datasets.items()
+            },
+            'validation_passed': True
+        }
+        
+        with open('validation_report.json', 'w') as f:
+            json.dump(validation_report, f, indent=2)
+        
+        print('✅ Validation report saved')
+        "
+
+    - name: Upload validation report
+      uses: actions/upload-artifact@v3
+      with:
+        name: validation-report-${{ github.run_id }}
+        path: validation_report.json
+
+  # ================================
+  # DEPLOYMENT TRIGGER
+  # ================================
+  trigger-deployment:
+    name: Trigger Model Deployment
+    runs-on: ubuntu-latest
+    needs: [train-model, validate-model]
+    if: success()
+    
+    steps:
+    - name: Trigger deployment workflow
+      run: |
+        echo "🚀 Triggering model deployment..."
+        
+        # In a real scenario, you would:
+        # 1. Update model serving containers with new model
+        # 2. Trigger blue-green deployment
+        # 3. Update API service to use new model
+        # 4. Send notifications to stakeholders
+        
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{
+            "event_type": "model-ready-for-deployment",
+            "client_payload": {
+              "run_id": "${{ github.run_id }}",
+              "reason": "${{ needs.check-conditions.outputs.reason }}",
+              "timestamp": "'$(date -Iseconds)'"
+            }
+          }' || echo "⚠️ Could not trigger deployment (webhook not configured)"
+
+    - name: Notify training completion
+      run: |
+        echo "🎉 Model training and validation completed successfully!"
+        echo "📊 Training reason: ${{ needs.check-conditions.outputs.reason }}"
+        echo "🔄 Run ID: ${{ github.run_id }}"
+        echo "📋 Artifacts available for 30 days"

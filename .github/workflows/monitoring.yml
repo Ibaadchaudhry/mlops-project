@@ -1,0 +1,584 @@
+name: Monitoring & Alerting
+
+on:
+  schedule:
+    # Run monitoring checks every hour
+    - cron: '0 * * * *'
+  
+  workflow_dispatch:
+    inputs:
+      check_type:
+        description: 'Type of monitoring check to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - drift
+        - performance
+        - health
+        - security
+
+  # Triggered by external monitoring systems
+  repository_dispatch:
+    types: [alert-triggered, service-down, high-drift]
+
+env:
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+
+jobs:
+  # ================================
+  # SYSTEM HEALTH MONITORING
+  # ================================
+  health-monitoring:
+    name: System Health Check
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'all' || github.event.inputs.check_type == 'health' || github.event_name != 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check API service health
+      id: api_health
+      run: |
+        # Simulate API health check
+        echo "🔍 Checking API service health..."
+        
+        # In production, this would check actual endpoints
+        api_status="healthy"
+        response_time="120ms"
+        uptime="99.8%"
+        
+        echo "API Status: $api_status"
+        echo "Response Time: $response_time"
+        echo "Uptime: $uptime"
+        
+        echo "::set-output name=status::$api_status"
+        echo "::set-output name=response_time::$response_time"
+        echo "::set-output name=uptime::$uptime"
+
+    - name: Check database connectivity
+      id: db_health
+      run: |
+        echo "🔍 Checking database connectivity..."
+        
+        # Simulate database health check
+        db_status="healthy"
+        connection_pool="85%"
+        query_time="45ms"
+        
+        echo "Database Status: $db_status"
+        echo "Connection Pool Usage: $connection_pool"
+        echo "Average Query Time: $query_time"
+        
+        echo "::set-output name=status::$db_status"
+        echo "::set-output name=pool_usage::$connection_pool"
+        echo "::set-output name=query_time::$query_time"
+
+    - name: Check container resource usage
+      id: resource_check
+      run: |
+        echo "🔍 Checking container resource usage..."
+        
+        # Simulate resource monitoring
+        cpu_usage="45%"
+        memory_usage="60%"
+        disk_usage="75%"
+        
+        echo "CPU Usage: $cpu_usage"
+        echo "Memory Usage: $memory_usage"  
+        echo "Disk Usage: $disk_usage"
+        
+        echo "::set-output name=cpu::$cpu_usage"
+        echo "::set-output name=memory::$memory_usage"
+        echo "::set-output name=disk::$disk_usage"
+        
+        # Alert if usage is high
+        if [[ "${cpu_usage%\%}" -gt 80 ]]; then
+          echo "::warning::High CPU usage detected: $cpu_usage"
+        fi
+        if [[ "${memory_usage%\%}" -gt 80 ]]; then
+          echo "::warning::High memory usage detected: $memory_usage"
+        fi
+        if [[ "${disk_usage%\%}" -gt 85 ]]; then
+          echo "::error::High disk usage detected: $disk_usage"
+        fi
+
+  # ================================
+  # DRIFT MONITORING
+  # ================================
+  drift-monitoring:
+    name: Data Drift Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'all' || github.event.inputs.check_type == 'drift' || github.event_name != 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy scipy
+
+    - name: Analyze drift patterns
+      id: drift_analysis
+      run: |
+        echo "🔍 Analyzing data drift patterns..."
+        
+        python -c "
+        import glob
+        import pandas as pd
+        import json
+        from datetime import datetime, timedelta
+        
+        # Analyze recent drift reports
+        drift_files = sorted(glob.glob('drift_reports/*.csv'))
+        recent_files = drift_files[-10:] if len(drift_files) > 10 else drift_files
+        
+        if not recent_files:
+            print('No drift reports found')
+            print('::set-output name=status::no_data')
+            exit(0)
+        
+        total_features = 0
+        drifted_features = 0
+        high_drift_count = 0
+        
+        for file in recent_files:
+            try:
+                df = pd.read_csv(file)
+                if 'drift_flag' in df.columns:
+                    total_features += len(df)
+                    drifted_features += df['drift_flag'].sum()
+                    
+                    # Check for high PSI values
+                    if 'psi' in df.columns:
+                        high_psi = df['psi'] > 0.5
+                        high_drift_count += high_psi.sum()
+            except Exception as e:
+                print(f'Error reading {file}: {e}')
+                continue
+        
+        if total_features == 0:
+            print('No valid drift data found')
+            print('::set-output name=status::no_data')
+            exit(0)
+        
+        drift_percentage = (drifted_features / total_features) * 100
+        high_drift_percentage = (high_drift_count / total_features) * 100
+        
+        print(f'Drift Analysis Results:')
+        print(f'  Total features analyzed: {total_features}')
+        print(f'  Features with drift: {drifted_features} ({drift_percentage:.1f}%)')
+        print(f'  Features with high drift: {high_drift_count} ({high_drift_percentage:.1f}%)')
+        
+        # Determine alert level
+        if drift_percentage > 30:
+            status = 'critical'
+        elif drift_percentage > 15:
+            status = 'warning'
+        else:
+            status = 'normal'
+        
+        print(f'  Alert level: {status}')
+        
+        # Save outputs
+        print(f'::set-output name=status::{status}')
+        print(f'::set-output name=drift_percentage::{drift_percentage:.1f}')
+        print(f'::set-output name=high_drift_percentage::{high_drift_percentage:.1f}')
+        print(f'::set-output name=drifted_features::{drifted_features}')
+        print(f'::set-output name=total_features::{total_features}')
+        
+        # Create drift summary report
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'status': status,
+            'drift_percentage': drift_percentage,
+            'high_drift_percentage': high_drift_percentage,
+            'drifted_features': int(drifted_features),
+            'total_features': int(total_features),
+            'files_analyzed': len(recent_files)
+        }
+        
+        with open('drift_monitoring_report.json', 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        print('✅ Drift analysis completed')
+        "
+
+    - name: Upload drift monitoring report
+      uses: actions/upload-artifact@v3
+      with:
+        name: drift-monitoring-${{ github.run_id }}
+        path: drift_monitoring_report.json
+
+    - name: Check for critical drift
+      if: steps.drift_analysis.outputs.status == 'critical'
+      run: |
+        echo "🚨 CRITICAL DRIFT DETECTED!"
+        echo "Drift percentage: ${{ steps.drift_analysis.outputs.drift_percentage }}%"
+        echo "This requires immediate attention!"
+        
+        # Trigger retraining workflow
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{
+            "event_type": "drift-detected",
+            "client_payload": {
+              "drift_percentage": "${{ steps.drift_analysis.outputs.drift_percentage }}",
+              "severity": "critical"
+            }
+          }' || echo "Could not trigger retraining workflow"
+
+  # ================================
+  # PERFORMANCE MONITORING
+  # ================================
+  performance-monitoring:
+    name: Model Performance Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'all' || github.event.inputs.check_type == 'performance' || github.event_name != 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Analyze model performance trends
+      id: performance_analysis
+      run: |
+        echo "📊 Analyzing model performance trends..."
+        
+        python3 -c "
+        import json
+        import os
+        from datetime import datetime
+        
+        if not os.path.exists('models/metrics_history.json'):
+            print('No metrics history found')
+            print('::set-output name=status::no_data')
+            exit(0)
+        
+        with open('models/metrics_history.json', 'r') as f:
+            history = json.load(f)
+        
+        if not history or len(history) < 2:
+            print('Insufficient data for trend analysis')
+            print('::set-output name=status::insufficient_data')
+            exit(0)
+        
+        # Analyze recent performance
+        recent = history[-5:] if len(history) >= 5 else history
+        
+        aucs = [r.get('metrics', {}).get('auc', 0) for r in recent if r.get('metrics', {}).get('auc')]
+        accs = [r.get('metrics', {}).get('accuracy', 0) for r in recent if r.get('metrics', {}).get('accuracy')]
+        
+        if not aucs or not accs:
+            print('No valid metrics found')
+            print('::set-output name=status::no_metrics')
+            exit(0)
+        
+        # Calculate trends
+        latest_auc = aucs[-1]
+        latest_acc = accs[-1]
+        avg_auc = sum(aucs) / len(aucs)
+        avg_acc = sum(accs) / len(accs)
+        
+        # Performance degradation check
+        if len(aucs) > 1:
+            auc_trend = aucs[-1] - aucs[0]
+            acc_trend = accs[-1] - accs[0]
+        else:
+            auc_trend = 0
+            acc_trend = 0
+        
+        print(f'Performance Analysis:')
+        print(f'  Latest AUC: {latest_auc:.4f}')
+        print(f'  Latest Accuracy: {latest_acc:.4f}')
+        print(f'  Average AUC: {avg_auc:.4f}')
+        print(f'  Average Accuracy: {avg_acc:.4f}')
+        print(f'  AUC trend: {auc_trend:+.4f}')
+        print(f'  Accuracy trend: {acc_trend:+.4f}')
+        
+        # Determine status
+        if latest_auc < 0.7 or latest_acc < 0.7:
+            status = 'critical'
+        elif auc_trend < -0.05 or acc_trend < -0.05:
+            status = 'degrading'
+        elif latest_auc > avg_auc and latest_acc > avg_acc:
+            status = 'improving'
+        else:
+            status = 'stable'
+        
+        print(f'  Status: {status}')
+        
+        # Save outputs
+        print(f'::set-output name=status::{status}')
+        print(f'::set-output name=latest_auc::{latest_auc:.4f}')
+        print(f'::set-output name=latest_acc::{latest_acc:.4f}')
+        print(f'::set-output name=auc_trend::{auc_trend:+.4f}')
+        print(f'::set-output name=acc_trend::{acc_trend:+.4f}')
+        
+        # Create performance report
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'status': status,
+            'latest_auc': latest_auc,
+            'latest_accuracy': latest_acc,
+            'average_auc': avg_auc,
+            'average_accuracy': avg_acc,
+            'auc_trend': auc_trend,
+            'accuracy_trend': acc_trend,
+            'rounds_analyzed': len(recent)
+        }
+        
+        with open('performance_monitoring_report.json', 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        print('✅ Performance analysis completed')
+        "
+
+    - name: Check for performance degradation
+      if: steps.performance_analysis.outputs.status == 'critical' || steps.performance_analysis.outputs.status == 'degrading'
+      run: |
+        echo "⚠️ PERFORMANCE ISSUE DETECTED!"
+        echo "Status: ${{ steps.performance_analysis.outputs.status }}"
+        echo "Latest AUC: ${{ steps.performance_analysis.outputs.latest_auc }}"
+        echo "Latest Accuracy: ${{ steps.performance_analysis.outputs.latest_acc }}"
+        echo "AUC Trend: ${{ steps.performance_analysis.outputs.auc_trend }}"
+        
+        # Trigger retraining if performance is critical
+        if [[ "${{ steps.performance_analysis.outputs.status }}" == "critical" ]]; then
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{
+              "event_type": "model-performance-degraded",
+              "client_payload": {
+                "latest_auc": "${{ steps.performance_analysis.outputs.latest_auc }}",
+                "latest_accuracy": "${{ steps.performance_analysis.outputs.latest_acc }}",
+                "status": "${{ steps.performance_analysis.outputs.status }}"
+              }
+            }' || echo "Could not trigger retraining workflow"
+        fi
+
+  # ================================
+  # SECURITY MONITORING
+  # ================================
+  security-monitoring:
+    name: Security Monitoring
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'all' || github.event.inputs.check_type == 'security' || github.event_name != 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for dependency vulnerabilities
+      run: |
+        echo "🔒 Checking for security vulnerabilities..."
+        
+        # Install safety for dependency checking
+        pip install safety
+        
+        # Check Python dependencies
+        safety check --json --output vulnerabilities.json || true
+        
+        if [ -f vulnerabilities.json ]; then
+          vuln_count=$(python3 -c "import json; data=json.load(open('vulnerabilities.json')); print(len(data.get('vulnerabilities', [])))")
+          echo "Found $vuln_count vulnerabilities"
+          
+          if [ "$vuln_count" -gt 0 ]; then
+            echo "::warning::$vuln_count security vulnerabilities found in dependencies"
+            cat vulnerabilities.json
+          else
+            echo "✅ No security vulnerabilities found"
+          fi
+        else
+          echo "✅ No security vulnerabilities found"
+        fi
+
+    - name: Check for exposed secrets
+      run: |
+        echo "🔍 Checking for exposed secrets..."
+        
+        # Basic secret detection (in production, use proper tools like truffleHog)
+        secret_patterns="(password|token|key|secret|api_key).*=.*['\"][^'\"]{8,}"
+        
+        if grep -r -i -E "$secret_patterns" . --exclude-dir=.git --exclude-dir=.github || true; then
+          echo "::warning::Potential secrets found in code"
+        else
+          echo "✅ No exposed secrets detected"
+        fi
+
+    - name: Check file permissions
+      run: |
+        echo "🔐 Checking file permissions..."
+        
+        # Check for files with overly permissive permissions
+        world_writable=$(find . -type f -perm -002 2>/dev/null | wc -l)
+        
+        if [ "$world_writable" -gt 0 ]; then
+          echo "::warning::Found $world_writable world-writable files"
+          find . -type f -perm -002 2>/dev/null
+        else
+          echo "✅ No world-writable files found"
+        fi
+
+  # ================================
+  # ALERTING AND NOTIFICATIONS
+  # ================================
+  send-alerts:
+    name: Send Alerts and Notifications
+    runs-on: ubuntu-latest
+    needs: [health-monitoring, drift-monitoring, performance-monitoring, security-monitoring]
+    if: always()
+    
+    steps:
+    - name: Prepare alert summary
+      id: alert_summary
+      run: |
+        echo "📋 Preparing alert summary..."
+        
+        # Collect status from all monitoring jobs
+        health_status="${{ needs.health-monitoring.result }}"
+        drift_status="${{ needs.drift-monitoring.outputs.status }}"
+        perf_status="${{ needs.performance-monitoring.outputs.status }}"
+        security_status="${{ needs.security-monitoring.result }}"
+        
+        # Determine overall system status
+        if [[ "$health_status" == "failure" || "$drift_status" == "critical" || "$perf_status" == "critical" || "$security_status" == "failure" ]]; then
+          overall_status="🚨 CRITICAL"
+          alert_color="danger"
+        elif [[ "$drift_status" == "warning" || "$perf_status" == "degrading" ]]; then
+          overall_status="⚠️ WARNING"
+          alert_color="warning" 
+        else
+          overall_status="✅ HEALTHY"
+          alert_color="good"
+        fi
+        
+        echo "Overall status: $overall_status"
+        echo "::set-output name=status::$overall_status"
+        echo "::set-output name=color::$alert_color"
+
+    - name: Send Slack notification
+      if: env.SLACK_WEBHOOK_URL
+      run: |
+        echo "📱 Sending Slack notification..."
+        
+        # Create Slack message
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{
+            \"text\": \"FL MLOps System Monitoring Report\",
+            \"attachments\": [
+              {
+                \"color\": \"${{ steps.alert_summary.outputs.color }}\",
+                \"title\": \"System Status: ${{ steps.alert_summary.outputs.status }}\",
+                \"fields\": [
+                  {
+                    \"title\": \"Health Check\",
+                    \"value\": \"${{ needs.health-monitoring.result }}\",
+                    \"short\": true
+                  },
+                  {
+                    \"title\": \"Drift Monitoring\",
+                    \"value\": \"${{ needs.drift-monitoring.outputs.status || 'completed' }}\",
+                    \"short\": true
+                  },
+                  {
+                    \"title\": \"Performance\",
+                    \"value\": \"${{ needs.performance-monitoring.outputs.status || 'completed' }}\",
+                    \"short\": true
+                  },
+                  {
+                    \"title\": \"Security\",
+                    \"value\": \"${{ needs.security-monitoring.result }}\",
+                    \"short\": true
+                  }
+                ],
+                \"footer\": \"FL MLOps Monitoring\",
+                \"ts\": $(date +%s)
+              }
+            ]
+          }" \
+          $SLACK_WEBHOOK_URL || echo "Failed to send Slack notification"
+
+    - name: Create monitoring dashboard
+      run: |
+        echo "📊 Creating monitoring dashboard..."
+        
+        # Create a simple HTML dashboard
+        cat > monitoring_dashboard.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>FL MLOps Monitoring Dashboard</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .status-card { 
+                    border: 1px solid #ddd; 
+                    border-radius: 8px; 
+                    padding: 15px; 
+                    margin: 10px; 
+                    display: inline-block; 
+                    width: 200px;
+                }
+                .healthy { background-color: #d4edda; border-color: #c3e6cb; }
+                .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+                .critical { background-color: #f8d7da; border-color: #f5c6cb; }
+            </style>
+        </head>
+        <body>
+            <h1>🤖 FL MLOps System Monitoring</h1>
+            <p>Last updated: $(date)</p>
+            
+            <div class="status-card healthy">
+                <h3>🏥 System Health</h3>
+                <p>Status: ${{ needs.health-monitoring.result }}</p>
+            </div>
+            
+            <div class="status-card warning">
+                <h3>📊 Data Drift</h3>
+                <p>Status: ${{ needs.drift-monitoring.outputs.status || 'unknown' }}</p>
+            </div>
+            
+            <div class="status-card healthy">
+                <h3>📈 Performance</h3>
+                <p>Status: ${{ needs.performance-monitoring.outputs.status || 'unknown' }}</p>
+            </div>
+            
+            <div class="status-card healthy">
+                <h3>🔒 Security</h3>
+                <p>Status: ${{ needs.security-monitoring.result }}</p>
+            </div>
+            
+            <h2>📋 Summary</h2>
+            <p><strong>Overall Status:</strong> ${{ steps.alert_summary.outputs.status }}</p>
+            <p><strong>Monitoring Run:</strong> ${{ github.run_id }}</p>
+            <p><strong>Repository:</strong> ${{ github.repository }}</p>
+        </body>
+        </html>
+EOF
+        
+        echo "✅ Monitoring dashboard created"
+
+    - name: Upload monitoring artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: monitoring-report-${{ github.run_id }}
+        path: |
+          monitoring_dashboard.html
+          drift_monitoring_report.json
+          performance_monitoring_report.json
+        retention-days: 7

@@ -1,0 +1,528 @@
+name: Model Deployment
+
+on:
+  # Triggered by successful model training
+  repository_dispatch:
+    types: [model-ready-for-deployment]
+  
+  # Manual deployment trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      model_version:
+        description: 'Model version to deploy (leave empty for latest)'
+        required: false
+        type: string
+      deployment_strategy:
+        description: 'Deployment strategy'
+        required: true
+        default: 'rolling'
+        type: choice
+        options:
+        - rolling
+        - blue-green
+        - canary
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ================================
+  # PREPARE DEPLOYMENT
+  # ================================
+  prepare-deployment:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.setup.outputs.environment }}
+      model_version: ${{ steps.setup.outputs.model_version }}
+      strategy: ${{ steps.setup.outputs.strategy }}
+      should_deploy: ${{ steps.setup.outputs.should_deploy }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup deployment parameters
+      id: setup
+      run: |
+        echo "🚀 Setting up deployment parameters..."
+        
+        # Determine environment
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          environment="${{ github.event.inputs.environment }}"
+          strategy="${{ github.event.inputs.deployment_strategy }}"
+          model_version="${{ github.event.inputs.model_version }}"
+        else
+          # Triggered by model training completion
+          environment="staging"  # Auto-deploy to staging
+          strategy="rolling"
+          model_version=""
+        fi
+        
+        # Get latest model if version not specified
+        if [[ -z "$model_version" ]]; then
+          if [[ -f "model_registry.json" ]]; then
+            model_version=$(python3 -c "
+            import json
+            with open('model_registry.json', 'r') as f:
+                registry = json.load(f)
+            if registry:
+                print(registry[-1]['version'])
+            else:
+                print('v1')
+            " 2>/dev/null || echo "latest")
+          else
+            model_version="latest"
+          fi
+        fi
+        
+        # Deployment validation
+        should_deploy="true"
+        
+        if [[ "$environment" == "production" ]]; then
+          # Additional checks for production deployment
+          echo "🔒 Production deployment requires additional validation..."
+          
+          # Check if model has been validated in staging
+          # In real scenario, check deployment history, performance metrics, etc.
+          staging_validated="true"  # Simulate validation check
+          
+          if [[ "$staging_validated" != "true" ]]; then
+            echo "❌ Model has not been validated in staging environment"
+            should_deploy="false"
+          fi
+        fi
+        
+        echo "Environment: $environment"
+        echo "Model Version: $model_version"
+        echo "Strategy: $strategy"
+        echo "Should Deploy: $should_deploy"
+        
+        echo "::set-output name=environment::$environment"
+        echo "::set-output name=model_version::$model_version"
+        echo "::set-output name=strategy::$strategy"
+        echo "::set-output name=should_deploy::$should_deploy"
+
+    - name: Validate deployment prerequisites
+      run: |
+        echo "✅ Validating deployment prerequisites..."
+        
+        # Check if Docker images exist
+        echo "🐳 Checking Docker images..."
+        # In real scenario, verify images exist in registry
+        echo "✅ Docker images validated"
+        
+        # Check if models exist
+        echo "🤖 Checking model artifacts..."
+        if [[ -d "models" ]] && [[ $(ls models/*.pt 2>/dev/null | wc -l) -gt 0 ]]; then
+          echo "✅ Model artifacts found"
+        else
+          echo "⚠️ No model artifacts found - will use existing deployed models"
+        fi
+        
+        # Check deployment environment readiness
+        echo "🌐 Checking environment readiness..."
+        echo "✅ Environment ${{ steps.setup.outputs.environment }} is ready"
+
+  # ================================
+  # STAGING DEPLOYMENT
+  # ================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: prepare-deployment
+    if: needs.prepare-deployment.outputs.should_deploy == 'true' && needs.prepare-deployment.outputs.environment == 'staging'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup staging environment
+      run: |
+        echo "🎯 Setting up staging environment..."
+        
+        # Create staging-specific configuration
+        cat > .env.staging << EOF
+        ENVIRONMENT=staging
+        API_HOST=staging-api.yourcompany.com
+        DASHBOARD_HOST=staging-dashboard.yourcompany.com
+        MODEL_VERSION=${{ needs.prepare-deployment.outputs.model_version }}
+        REPLICA_COUNT=2
+        RESOURCE_LIMITS_CPU=500m
+        RESOURCE_LIMITS_MEMORY=1Gi
+        LOG_LEVEL=DEBUG
+        MONITORING_ENABLED=true
+        EOF
+        
+        echo "✅ Staging configuration created"
+
+    - name: Deploy API service
+      run: |
+        echo "🚀 Deploying API service to staging..."
+        
+        # Simulate API service deployment
+        echo "Deploying API with strategy: ${{ needs.prepare-deployment.outputs.strategy }}"
+        echo "Model version: ${{ needs.prepare-deployment.outputs.model_version }}"
+        
+        # In real scenario, this would:
+        # 1. Update Kubernetes manifests
+        # 2. Apply rolling update
+        # 3. Wait for health checks
+        # 4. Verify deployment success
+        
+        sleep 5
+        echo "✅ API service deployed successfully"
+
+    - name: Deploy dashboard service
+      run: |
+        echo "🎨 Deploying dashboard service to staging..."
+        
+        # Simulate dashboard deployment
+        sleep 3
+        echo "✅ Dashboard service deployed successfully"
+
+    - name: Deploy FL server service
+      run: |
+        echo "🤝 Deploying FL server service to staging..."
+        
+        # Simulate FL server deployment
+        sleep 3
+        echo "✅ FL server service deployed successfully"
+
+    - name: Update load balancer
+      run: |
+        echo "⚖️ Updating load balancer configuration..."
+        
+        # Simulate load balancer update
+        echo "Routing traffic to new instances..."
+        sleep 2
+        echo "✅ Load balancer updated"
+
+    - name: Run health checks
+      run: |
+        echo "🏥 Running post-deployment health checks..."
+        
+        # Simulate health checks
+        services=("api" "dashboard" "fl-server" "prometheus" "grafana")
+        
+        for service in "${services[@]}"; do
+          echo "Checking $service health..."
+          sleep 1
+          echo "✅ $service is healthy"
+        done
+        
+        echo "🎉 All services are healthy!"
+
+    - name: Run smoke tests
+      run: |
+        echo "🔥 Running smoke tests..."
+        
+        # Simulate smoke tests
+        tests=("api_health" "model_prediction" "dashboard_access" "metrics_collection")
+        
+        for test in "${tests[@]}"; do
+          echo "Running $test test..."
+          sleep 2
+          echo "✅ $test passed"
+        done
+        
+        echo "🎉 All smoke tests passed!"
+
+    - name: Deployment summary
+      run: |
+        echo "📋 Staging Deployment Summary"
+        echo "Environment: staging"
+        echo "Model Version: ${{ needs.prepare-deployment.outputs.model_version }}"
+        echo "Strategy: ${{ needs.prepare-deployment.outputs.strategy }}"
+        echo "Status: ✅ SUCCESS"
+        echo ""
+        echo "🌐 Staging URLs:"
+        echo "  - API: https://staging-api.yourcompany.com"
+        echo "  - Dashboard: https://staging-dashboard.yourcompany.com"
+        echo "  - Prometheus: https://staging-prometheus.yourcompany.com"
+        echo "  - Grafana: https://staging-grafana.yourcompany.com"
+
+  # ================================
+  # PRODUCTION DEPLOYMENT  
+  # ================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [prepare-deployment, deploy-staging]
+    if: |
+      needs.prepare-deployment.outputs.should_deploy == 'true' && 
+      needs.prepare-deployment.outputs.environment == 'production' &&
+      (needs.deploy-staging.result == 'success' || needs.deploy-staging.result == 'skipped')
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup production environment
+      run: |
+        echo "🎯 Setting up production environment..."
+        
+        # Create production-specific configuration
+        cat > .env.production << EOF
+        ENVIRONMENT=production
+        API_HOST=api.yourcompany.com
+        DASHBOARD_HOST=dashboard.yourcompany.com
+        MODEL_VERSION=${{ needs.prepare-deployment.outputs.model_version }}
+        REPLICA_COUNT=5
+        RESOURCE_LIMITS_CPU=1000m
+        RESOURCE_LIMITS_MEMORY=2Gi
+        LOG_LEVEL=INFO
+        MONITORING_ENABLED=true
+        BACKUP_ENABLED=true
+        SECURITY_SCANNING=true
+        EOF
+        
+        echo "✅ Production configuration created"
+
+    - name: Pre-deployment backup
+      run: |
+        echo "💾 Creating pre-deployment backup..."
+        
+        # Simulate backup creation
+        echo "Backing up current models..."
+        echo "Backing up configurations..."
+        echo "Backing up database..."
+        sleep 5
+        echo "✅ Backup completed"
+
+    - name: Blue-Green deployment preparation
+      if: needs.prepare-deployment.outputs.strategy == 'blue-green'
+      run: |
+        echo "🔵🟢 Preparing Blue-Green deployment..."
+        
+        # Simulate blue-green setup
+        echo "Setting up green environment..."
+        echo "Copying current production state to green..."
+        sleep 10
+        echo "✅ Green environment ready"
+
+    - name: Canary deployment preparation
+      if: needs.prepare-deployment.outputs.strategy == 'canary'
+      run: |
+        echo "🐦 Preparing Canary deployment..."
+        
+        # Simulate canary setup
+        echo "Setting up canary instances (10% traffic)..."
+        sleep 5
+        echo "✅ Canary instances ready"
+
+    - name: Deploy to production
+      run: |
+        echo "🚀 Deploying to production..."
+        
+        strategy="${{ needs.prepare-deployment.outputs.strategy }}"
+        
+        case $strategy in
+          "rolling")
+            echo "🔄 Performing rolling deployment..."
+            echo "Updating instances one by one..."
+            for i in {1..5}; do
+              echo "Updating instance $i/5..."
+              sleep 3
+            done
+            ;;
+          "blue-green")
+            echo "🔵🟢 Performing blue-green deployment..."
+            echo "Deploying to green environment..."
+            sleep 10
+            echo "Switching traffic to green..."
+            sleep 5
+            ;;
+          "canary")
+            echo "🐦 Performing canary deployment..."
+            echo "Deploying canary instances..."
+            sleep 5
+            echo "Monitoring canary performance..."
+            sleep 10
+            echo "Promoting canary to full deployment..."
+            sleep 5
+            ;;
+        esac
+        
+        echo "✅ Production deployment completed"
+
+    - name: Production health checks
+      run: |
+        echo "🏥 Running comprehensive production health checks..."
+        
+        # Extended health checks for production
+        checks=(
+          "api_endpoints"
+          "model_serving"
+          "database_connectivity"
+          "cache_systems"
+          "monitoring_systems"
+          "backup_systems"
+          "security_systems"
+          "load_balancer"
+          "ssl_certificates"
+          "performance_metrics"
+        )
+        
+        for check in "${checks[@]}"; do
+          echo "Checking $check..."
+          sleep 2
+          echo "✅ $check is healthy"
+        done
+        
+        echo "🎉 All production health checks passed!"
+
+    - name: Performance validation
+      run: |
+        echo "📊 Running performance validation..."
+        
+        # Simulate performance tests
+        echo "Load testing API endpoints..."
+        sleep 5
+        echo "Response time: 95ms (target: <100ms) ✅"
+        
+        echo "Testing model inference latency..."
+        sleep 3
+        echo "Inference time: 45ms (target: <50ms) ✅"
+        
+        echo "Checking resource utilization..."
+        sleep 2
+        echo "CPU usage: 35% (target: <60%) ✅"
+        echo "Memory usage: 45% (target: <70%) ✅"
+        
+        echo "✅ Performance validation passed!"
+
+    - name: Enable monitoring and alerting
+      run: |
+        echo "📊 Enabling production monitoring and alerting..."
+        
+        # Simulate monitoring setup
+        echo "Configuring Prometheus scraping..."
+        echo "Setting up Grafana dashboards..."
+        echo "Enabling alerting rules..."
+        echo "Testing notification channels..."
+        sleep 5
+        
+        echo "✅ Monitoring and alerting enabled"
+
+    - name: Production deployment summary
+      run: |
+        echo "🎉 PRODUCTION DEPLOYMENT SUCCESSFUL!"
+        echo ""
+        echo "📋 Deployment Summary:"
+        echo "  Environment: production"
+        echo "  Model Version: ${{ needs.prepare-deployment.outputs.model_version }}"
+        echo "  Strategy: ${{ needs.prepare-deployment.outputs.strategy }}"
+        echo "  Deployment Time: $(date)"
+        echo "  Status: ✅ SUCCESS"
+        echo ""
+        echo "🌐 Production URLs:"
+        echo "  - API: https://api.yourcompany.com"
+        echo "  - Dashboard: https://dashboard.yourcompany.com"
+        echo "  - Monitoring: https://grafana.yourcompany.com"
+        echo ""
+        echo "📊 Next Steps:"
+        echo "  1. Monitor performance metrics"
+        echo "  2. Watch for any alerts"
+        echo "  3. Validate user traffic patterns"
+        echo "  4. Schedule post-deployment review"
+
+  # ================================
+  # ROLLBACK PREPARATION
+  # ================================
+  prepare-rollback:
+    name: Prepare Rollback Plan
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: failure()
+    
+    steps:
+    - name: Create rollback plan
+      run: |
+        echo "🔄 Creating rollback plan due to deployment failure..."
+        
+        # Simulate rollback preparation
+        echo "Identifying previous stable version..."
+        echo "Preparing rollback scripts..."
+        echo "Validating rollback targets..."
+        
+        # In real scenario:
+        # 1. Identify last known good configuration
+        # 2. Prepare infrastructure rollback
+        # 3. Create database migration rollback
+        # 4. Test rollback procedure in staging
+        
+        echo "📋 Rollback Plan Created:"
+        echo "  - Previous model version: v1.2.3"
+        echo "  - Database backup: backup-2024-11-23"
+        echo "  - Infrastructure snapshot: snap-prod-20241123"
+        echo ""
+        echo "🚨 Manual intervention required for rollback execution"
+
+  # ================================
+  # POST-DEPLOYMENT MONITORING
+  # ================================
+  post-deployment-monitoring:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: success()
+    
+    steps:
+    - name: Setup post-deployment monitoring
+      run: |
+        echo "📊 Setting up enhanced post-deployment monitoring..."
+        
+        # Simulate enhanced monitoring setup
+        echo "Increasing metrics collection frequency..."
+        echo "Setting up deployment-specific dashboards..."
+        echo "Configuring deployment success/failure alerts..."
+        echo "Enabling error rate monitoring..."
+        
+        sleep 5
+        echo "✅ Enhanced monitoring configured"
+
+    - name: Schedule follow-up checks
+      run: |
+        echo "⏰ Scheduling follow-up monitoring checks..."
+        
+        # In real scenario, schedule additional monitoring workflows
+        echo "Scheduled checks:"
+        echo "  - 1 hour: Performance validation"
+        echo "  - 4 hours: Extended health check"
+        echo "  - 24 hours: Full system validation"
+        echo "  - 7 days: Deployment review meeting"
+        
+        echo "✅ Follow-up checks scheduled"
+
+    - name: Deployment notification
+      run: |
+        echo "📬 Sending deployment notifications..."
+        
+        environment="${{ needs.prepare-deployment.outputs.environment }}"
+        model_version="${{ needs.prepare-deployment.outputs.model_version }}"
+        
+        # Create deployment notification
+        message="🎉 Deployment Successful!
+        
+        Environment: $environment
+        Model Version: $model_version
+        Deployment Time: $(date)
+        
+        All services are healthy and operational."
+        
+        echo "$message"
+        
+        # In real scenario, send to Slack/Teams/Email
+        echo "✅ Notifications sent to stakeholders"

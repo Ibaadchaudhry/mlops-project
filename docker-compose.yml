@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # Federated Learning Server
+  fl-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/app/models
+      - ./drift_reports:/app/drift_reports
+      - ./client_datasets.pkl:/app/client_datasets.pkl
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - fl-network
+    depends_on:
+      - prometheus
+
+  # API Service for Model Serving
+  api-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./client_datasets.pkl:/app/client_datasets.pkl
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - fl-network
+    depends_on:
+      - prometheus
+
+  # Streamlit Dashboard
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./models:/app/models
+      - ./drift_reports:/app/drift_reports
+      - ./client_datasets.pkl:/app/client_datasets.pkl
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - fl-network
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - fl-network
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - fl-network
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  fl-network:
+    driver: bridge
