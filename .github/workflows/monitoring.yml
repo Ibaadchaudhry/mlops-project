@@ -563,7 +563,7 @@ jobs:
                 <p>Status: ${{ needs.security-monitoring.result }}</p>
             </div>
             
-            <h2>📋 Summary</h2>
+            <h2>Summary</h2>
             <p><strong>Overall Status:</strong> ${{ steps.alert_summary.outputs.status }}</p>
             <p><strong>Monitoring Run:</strong> ${{ github.run_id }}</p>
             <p><strong>Repository:</strong> ${{ github.repository }}</p>
