@@ -32,38 +32,31 @@ jobs:
     - name: Create test files
       run: |
         mkdir -p tests
-        python -c "
-import os
-
-# Create basic test files
-test_content = '''import pytest
+        cat > tests/test_basic.py << 'EOF'
+import pytest
 import numpy as np
 import pandas as pd
 import torch
 
 def test_basic_imports():
-    \\\"\\\"\\\"Test that all required packages can be imported\\\"\\\"\\\"
+    """Test that all required packages can be imported"""
     import flwr as fl
     import torch.nn as nn
     import sklearn
     assert True
 
 def test_model_creation():
-    \\\"\\\"\\\"Test basic model creation\\\"\\\"\\\"
+    """Test basic model creation"""
     from model import TabularMLP
     model = TabularMLP(input_dim=10, hidden_dims=[64, 32], output_dim=1)
     assert model is not None
 
 def test_data_processing():
-    \\\"\\\"\\\"Test data processing functions\\\"\\\"\\\"
+    """Test data processing functions"""
     data = np.random.randn(100, 10).astype(np.float32)
     assert data.dtype == np.float32
     assert data.shape == (100, 10)
-'''
-
-with open('tests/test_basic.py', 'w') as f:
-    f.write(test_content)
-"
+EOF
         
     - name: Run unit tests
       run: |
@@ -90,30 +83,26 @@ with open('tests/test_basic.py', 'w') as f:
     - name: Create integration tests
       run: |
         mkdir -p tests/integration
-        python -c "
-test_content = '''import pytest
+        cat > tests/integration/test_api_integration.py << 'EOF'
+import pytest
 import requests
 import time
 import subprocess
 import os
 
 def test_api_health():
-    \\\"\\\"\\\"Test API health endpoint\\\"\\\"\\\"
+    """Test API health endpoint"""
     # Mock test for now
     assert True
 
 def test_model_loading():
-    \\\"\\\"\\\"Test model loading functionality\\\"\\\"\\\"
-    assert os.path.exists(\\\"model.py\\\")
+    """Test model loading functionality"""
+    assert os.path.exists("model.py")
 
 def test_data_pipeline():
-    \\\"\\\"\\\"Test data ingestion pipeline\\\"\\\"\\\"
-    assert os.path.exists(\\\"data_ingestion.py\\\")
-'''
-
-with open('tests/integration/test_api_integration.py', 'w') as f:
-    f.write(test_content)
-"
+    """Test data ingestion pipeline"""
+    assert os.path.exists("data_ingestion.py")
+EOF
         
     - name: Run integration tests
       run: |
