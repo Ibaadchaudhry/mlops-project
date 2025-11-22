@@ -571,13 +571,13 @@ jobs:
         </html>
 EOF
         
-        echo "✅ Monitoring dashboard created"
+        echo "Monitoring dashboard created"
 
     - name: Upload monitoring artifacts
       uses: actions/upload-artifact@v3
       with:
         name: monitoring-report-${{ github.run_id }}
-        path: |
+        path: monitoring_report.html
           monitoring_dashboard.html
           drift_monitoring_report.json
           performance_monitoring_report.json
