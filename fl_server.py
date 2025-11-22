@@ -7,6 +7,9 @@ from fl_client import FLClient
 from drift_detector import detect_drift_featurewise
 import pandas as pd
 import os
+import json
+import numpy as np
+import numbers
 
 def aggregate_metrics(results):
     """Aggregate metrics across clients (weighted by number of examples)."""
@@ -87,6 +90,96 @@ class DriftAwareStrategy(fl.server.strategy.FedAvg):
     def aggregate_evaluate(self, rnd, results, failures):
         # First call parent to get aggregated metrics
         aggregated = super().aggregate_evaluate(rnd, results, failures)
+
+        # --- Aggregate evaluation metrics into a single dict (robust to Flower result shape) ---
+        pairs = []
+        for r in results:
+            # Common shapes:
+            # 1) (num_examples, metrics)
+            # 2) (client, (loss, num_examples, metrics))  [current Flower evaluate returns loss first]
+            # 3) (client, (num_examples, metrics))  [older variants]
+            try:
+                # Shape (num_examples, metrics)
+                if isinstance(r, tuple) and len(r) == 2 and isinstance(r[0], (int, np.integer)):
+                    num_examples = int(r[0])
+                    metrics = r[1] or {}
+                    pairs.append((num_examples, metrics))
+                    continue
+            except Exception:
+                pass
+
+            try:
+                client, res = r
+                # If res is a tuple
+                if isinstance(res, tuple):
+                    # Common expected shapes:
+                    # (loss, num_examples, metrics)
+                    # (num_examples, metrics)
+                    # Be robust to numpy/scalar types
+                    if len(res) >= 3 and isinstance(res[0], numbers.Number) and isinstance(res[1], (int, np.integer)) and isinstance(res[-1], dict):
+                        loss_val = float(res[0])
+                        num_examples = int(res[1])
+                        metrics = dict(res[-1] or {})
+                        metrics["loss"] = loss_val
+                        pairs.append((num_examples, metrics))
+                        continue
+                    if len(res) == 3 and isinstance(res[0], numbers.Number) and isinstance(res[1], numbers.Number) and isinstance(res[2], dict):
+                        # fallback pattern
+                        loss_val = float(res[0])
+                        num_examples = int(res[1])
+                        metrics = dict(res[2] or {})
+                        metrics["loss"] = loss_val
+                        pairs.append((num_examples, metrics))
+                        continue
+                    if len(res) == 2 and isinstance(res[0], (int, np.integer)) and isinstance(res[1], dict):
+                        num_examples = int(res[0])
+                        metrics = dict(res[1] or {})
+                        pairs.append((num_examples, metrics))
+                        continue
+                # Fallback: try attributes (e.g., EvaluateRes objects)
+                num_examples = getattr(res, "num_examples", None)
+                metrics = getattr(res, "metrics", None) or {}
+                # Try to extract loss attribute if present
+                loss_attr = getattr(res, "loss", None)
+                try:
+                    metrics = dict(metrics)
+                except Exception:
+                    metrics = {}
+                if loss_attr is not None and isinstance(loss_attr, numbers.Number):
+                    metrics["loss"] = float(loss_attr)
+                if num_examples is not None:
+                    pairs.append((int(num_examples), metrics))
+            except Exception:
+                # skip malformed result
+                continue
+
+        if pairs:
+            try:
+                avg_metrics = aggregate_metrics(pairs)
+            except Exception:
+                avg_metrics = {}
+        else:
+            avg_metrics = {}
+
+        # (debug prints removed) - parsing is now robust to EvaluateRes shapes
+
+        # Persist aggregated metrics per round into models/metrics_history.json
+        try:
+            os.makedirs(self.model_dir, exist_ok=True)
+            mh_path = os.path.join(self.model_dir, "metrics_history.json")
+            history = []
+            if os.path.exists(mh_path):
+                try:
+                    with open(mh_path, "r", encoding="utf-8") as fh:
+                        history = json.load(fh) or []
+                except Exception:
+                    history = []
+            history.append({"round": int(rnd), "metrics": avg_metrics})
+            with open(mh_path, "w", encoding="utf-8") as fh:
+                json.dump(history, fh, indent=2)
+            print(f"[Server] Appended metrics for round {rnd} to {mh_path}")
+        except Exception as e:
+            print(f"[Server] Failed to persist metrics history: {e}")
 
         # Run drift detection if we have client raw data
         if self._client_datasets is None:

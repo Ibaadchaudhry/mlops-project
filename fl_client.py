@@ -66,5 +66,11 @@ class FLClient(fl.client.NumPyClient):
             metrics["accuracy"] = -1.0
         # return (loss, num_examples, metrics). Use 1 - AUC as proxy loss if AUC valid
         loss = 1.0 - metrics["auc"] if metrics["auc"] >= 0.0 else 1.0
+        # Also include loss inside the metrics dict for redundancy so server
+        # can pick it up whether Flower sends attributes or tuple positions.
+        try:
+            metrics["loss"] = float(loss)
+        except Exception:
+            metrics["loss"] = None
         return float(loss), len(y_val), metrics
 

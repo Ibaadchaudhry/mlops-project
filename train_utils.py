@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import roc_auc_score, accuracy_score
 
-def train_local(model, X, y, epochs=1, batch_size=64, lr=1e-3, device=None):
+def train_local(model, X, y, epochs=5, batch_size=64, lr=1e-3, device=None):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.train()
