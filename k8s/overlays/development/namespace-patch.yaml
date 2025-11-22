@@ -1,0 +1,9 @@
+# Development Namespace Patch
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops-fl-dev
+  labels:
+    name: mlops-fl-dev
+    purpose: federated-learning
+    environment: development

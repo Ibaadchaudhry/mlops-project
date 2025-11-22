@@ -1,0 +1,117 @@
+# Federated Learning Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fl-server
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: fl-server
+spec:
+  replicas: 1  # FL server should be singleton
+  strategy:
+    type: Recreate  # Ensure only one instance at a time
+  selector:
+    matchLabels:
+      app: federated-learning
+      component: fl-server
+  template:
+    metadata:
+      labels:
+        app: federated-learning
+        component: fl-server
+    spec:
+      containers:
+      - name: fl-server
+        image: fl-server:latest  # Will be overridden by Kustomization
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: fl-port
+          protocol: TCP
+        env:
+        - name: FL_SERVER_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: FL_SERVER_HOST
+        - name: FL_SERVER_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: FL_SERVER_PORT
+        - name: FL_ROUNDS
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: FL_ROUNDS
+        - name: FL_MIN_CLIENTS
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: FL_MIN_CLIENTS
+        - name: PYTHONUNBUFFERED
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: PYTHONUNBUFFERED
+        - name: PROMETHEUS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: PROMETHEUS_HOST
+        volumeMounts:
+        - name: models-storage
+          mountPath: /app/models
+        - name: data-storage
+          mountPath: /app/data
+        - name: drift-reports-storage
+          mountPath: /app/drift_reports
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: models-storage
+        persistentVolumeClaim:
+          claimName: models-pvc
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: data-pvc
+      - name: drift-reports-storage
+        persistentVolumeClaim:
+          claimName: drift-reports-pvc
+      restartPolicy: Always
+---
+# FL Server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: fl-server-service
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: fl-server
+spec:
+  selector:
+    app: federated-learning
+    component: fl-server
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: fl-port
+  type: ClusterIP  # Internal service for FL clients

@@ -1,0 +1,148 @@
+# FL Client Job Template
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fl-client-job
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: fl-client
+spec:
+  parallelism: 3  # Number of concurrent clients
+  completions: 3  # Total number of clients to run
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: federated-learning
+        component: fl-client
+    spec:
+      containers:
+      - name: fl-client
+        image: fl-client:latest  # Will be overridden by Kustomization
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: FL_SERVER_HOST
+          value: "fl-server-service"
+        - name: FL_SERVER_PORT
+          value: "8080"
+        - name: CLIENT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: PYTHONUNBUFFERED
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: PYTHONUNBUFFERED
+        - name: DATA_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: DATA_PATH
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data
+          readOnly: true
+        - name: models-storage
+          mountPath: /app/models
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: data-pvc
+      - name: models-storage
+        persistentVolumeClaim:
+          claimName: models-pvc
+      restartPolicy: OnFailure
+---
+# FL Client CronJob for scheduled training
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fl-client-cronjob
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: fl-client-scheduler
+spec:
+  schedule: "0 2 * * 0"  # Weekly on Sunday at 2 AM
+  jobTemplate:
+    spec:
+      parallelism: 3
+      completions: 3
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: federated-learning
+            component: fl-client
+        spec:
+          containers:
+          - name: fl-client
+            image: fl-client:latest  # Will be overridden by Kustomization
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: FL_SERVER_HOST
+              value: "fl-server-service"
+            - name: FL_SERVER_PORT
+              value: "8080"
+            - name: CLIENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PYTHONUNBUFFERED
+              valueFrom:
+                configMapKeyRef:
+                  name: fl-config
+                  key: PYTHONUNBUFFERED
+            - name: TRAINING_MODE
+              value: "scheduled"
+            volumeMounts:
+            - name: data-storage
+              mountPath: /app/data
+              readOnly: true
+            - name: models-storage
+              mountPath: /app/models
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "500m"
+              limits:
+                memory: "1Gi"
+                cpu: "1000m"
+          volumes:
+          - name: data-storage
+            persistentVolumeClaim:
+              claimName: data-pvc
+          - name: models-storage
+            persistentVolumeClaim:
+              claimName: models-pvc
+          restartPolicy: OnFailure
+---
+# Service for FL Client metrics (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fl-client-metrics
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: fl-client-metrics
+spec:
+  selector:
+    app: federated-learning
+    component: fl-client
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: metrics
+  type: ClusterIP
+  clusterIP: None  # Headless service for pod discovery

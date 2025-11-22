@@ -1,0 +1,64 @@
+# Namespace for the entire MLOps Federated Learning System
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops-fl
+  labels:
+    name: mlops-fl
+    purpose: federated-learning
+    environment: shared
+---
+# ConfigMap for shared configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fl-config
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: config
+data:
+  # FL Server Configuration
+  FL_SERVER_HOST: "0.0.0.0"
+  FL_SERVER_PORT: "8080"
+  FL_ROUNDS: "10"
+  FL_MIN_CLIENTS: "2"
+  FL_MIN_AVAILABLE_CLIENTS: "2"
+  
+  # API Configuration
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  
+  # Dashboard Configuration
+  DASHBOARD_HOST: "0.0.0.0"
+  DASHBOARD_PORT: "8501"
+  
+  # Monitoring Configuration
+  PROMETHEUS_HOST: "prometheus-service"
+  PROMETHEUS_PORT: "9090"
+  GRAFANA_HOST: "grafana-service"
+  GRAFANA_PORT: "3000"
+  
+  # Data Configuration
+  MODEL_PATH: "/app/models"
+  DATA_PATH: "/app/data"
+  DRIFT_REPORTS_PATH: "/app/drift_reports"
+  
+  # General Configuration
+  PYTHONUNBUFFERED: "1"
+  LOG_LEVEL: "INFO"
+---
+# Secret for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fl-secrets
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: secrets
+type: Opaque
+data:
+  # Base64 encoded values (admin:admin)
+  grafana-admin-password: YWRtaW4=  # admin
+  api-secret-key: bWxvcHMtZmwtc2VjcmV0LWtleS0yMDI1  # mlops-fl-secret-key-2025

@@ -1,0 +1,55 @@
+# Production Storage Patch - Larger storage with backup
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models-pvc
+  annotations:
+    backup.policy: daily
+spec:
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-pvc
+  annotations:
+    backup.policy: daily
+spec:
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drift-reports-pvc
+  annotations:
+    backup.policy: weekly
+spec:
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  annotations:
+    backup.policy: daily
+spec:
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  annotations:
+    backup.policy: daily
+spec:
+  resources:
+    requests:
+      storage: 5Gi

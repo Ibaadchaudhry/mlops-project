@@ -1,0 +1,142 @@
+# Dashboard Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: dashboard
+spec:
+  replicas: 1  # Streamlit dashboard typically runs as single instance
+  selector:
+    matchLabels:
+      app: federated-learning
+      component: dashboard
+  template:
+    metadata:
+      labels:
+        app: federated-learning
+        component: dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: dashboard:latest  # Will be overridden by Kustomization
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8501
+          name: http
+          protocol: TCP
+        env:
+        - name: DASHBOARD_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: DASHBOARD_HOST
+        - name: DASHBOARD_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: DASHBOARD_PORT
+        - name: PYTHONUNBUFFERED
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: PYTHONUNBUFFERED
+        - name: MODEL_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: MODEL_PATH
+        - name: DRIFT_REPORTS_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: DRIFT_REPORTS_PATH
+        - name: API_SERVICE_URL
+          value: "http://api-service:8000"
+        volumeMounts:
+        - name: models-storage
+          mountPath: /app/models
+          readOnly: true
+        - name: data-storage
+          mountPath: /app/data
+          readOnly: true
+        - name: drift-reports-storage
+          mountPath: /app/drift_reports
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8501
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8501
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: models-storage
+        persistentVolumeClaim:
+          claimName: models-pvc
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: data-pvc
+      - name: drift-reports-storage
+        persistentVolumeClaim:
+          claimName: drift-reports-pvc
+      restartPolicy: Always
+---
+# Dashboard Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: dashboard
+spec:
+  selector:
+    app: federated-learning
+    component: dashboard
+  ports:
+  - port: 8501
+    targetPort: 8501
+    protocol: TCP
+    name: http
+  type: LoadBalancer  # External access for dashboard
+---
+# Dashboard Ingress (optional - for production with ingress controller)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard-ingress
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: dashboard
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+  - host: dashboard.mlops-fl.local  # Change to your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: dashboard-service
+            port:
+              number: 8501

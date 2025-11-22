@@ -1,0 +1,139 @@
+# API Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: api-service
+spec:
+  replicas: 2  # Can scale horizontally
+  selector:
+    matchLabels:
+      app: federated-learning
+      component: api-service
+  template:
+    metadata:
+      labels:
+        app: federated-learning
+        component: api-service
+    spec:
+      containers:
+      - name: api-service
+        image: api-service:latest  # Will be overridden by Kustomization
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: API_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: API_HOST
+        - name: API_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: API_PORT
+        - name: PYTHONUNBUFFERED
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: PYTHONUNBUFFERED
+        - name: MODEL_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: fl-config
+              key: MODEL_PATH
+        - name: API_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: fl-secrets
+              key: api-secret-key
+        volumeMounts:
+        - name: models-storage
+          mountPath: /app/models
+          readOnly: true
+        - name: data-storage
+          mountPath: /app/data
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: models-storage
+        persistentVolumeClaim:
+          claimName: models-pvc
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: data-pvc
+      restartPolicy: Always
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: api-service
+spec:
+  selector:
+    app: federated-learning
+    component: api-service
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  type: LoadBalancer  # External access for API
+---
+# API Service Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-service-hpa
+  namespace: mlops-fl
+  labels:
+    app: federated-learning
+    component: api-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

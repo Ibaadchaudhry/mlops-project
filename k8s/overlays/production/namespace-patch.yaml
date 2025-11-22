@@ -1,0 +1,13 @@
+# Production Namespace Patch
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops-fl-prod
+  labels:
+    name: mlops-fl-prod
+    purpose: federated-learning
+    environment: production
+    backup: enabled
+  annotations:
+    contact: "ops-team@company.com"
+    sla: "99.9%"

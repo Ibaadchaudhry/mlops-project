@@ -1,0 +1,47 @@
+# Production Security Patch
+apiVersion: v1
+kind: NetworkPolicy
+metadata:
+  name: fl-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: federated-learning
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: federated-learning
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8501
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to:
+    - podSelector:
+        matchLabels:
+          app: federated-learning
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fl-security-sa
+  annotations:
+    security.policy: restricted
+automountServiceAccountToken: false

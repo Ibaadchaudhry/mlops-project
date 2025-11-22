@@ -1,0 +1,57 @@
+# Base Kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: mlops-fl-base
+
+resources:
+  - 00-namespace.yaml
+  - 01-storage.yaml
+  - 02-fl-server.yaml
+  - 03-api-service.yaml
+  - 04-dashboard.yaml
+  - 05-prometheus.yaml
+  - 06-grafana.yaml
+  - 07-fl-clients.yaml
+
+commonLabels:
+  system: mlops-federated-learning
+  managed-by: kustomize
+
+commonAnnotations:
+  contact: "mlops-team@company.com"
+  documentation: "https://github.com/your-org/mlops-project"
+
+# Resource name prefix for better organization
+namePrefix: mlops-fl-
+
+# Images to be used (will be overridden by overlays)
+images:
+  - name: fl-server
+    newName: fl-server
+    newTag: latest
+  - name: api-service
+    newName: api-service
+    newTag: latest
+  - name: dashboard
+    newName: dashboard
+    newTag: latest
+  - name: fl-client
+    newName: fl-client
+    newTag: latest
+
+# ConfigMap generator for additional config
+configMapGenerator:
+  - name: build-info
+    literals:
+      - build.date=2025-11-23
+      - build.version=1.0.0
+      - build.environment=base
+
+# Secret generator (for development only)
+secretGenerator:
+  - name: additional-secrets
+    literals:
+      - database.url=postgresql://localhost:5432/mlops
+      - redis.url=redis://localhost:6379
