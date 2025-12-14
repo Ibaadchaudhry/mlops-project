@@ -1,23 +1,7 @@
 name: Model Deployment
 
 on:
-  # Triggered by successful model training
-  repository_dispatch:
-    types: [model-ready-for-deployment]
-  
-  # Manual deployment trigger
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Deployment environment'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-        - staging
-        - production
-      model_version:
-        description: 'Model version to deploy (leave empty for latest)'
         required: false
         type: string
       deployment_strategy:

@@ -1,23 +1,7 @@
 name: Monitoring and Alerting
 
 on:
-  schedule:
-    # Run monitoring checks every hour  
-    - cron: '0 * * * *'
-  
   workflow_dispatch:
-    inputs:
-      check_type:
-        description: 'Type of monitoring check to run'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-        - all
-        - drift
-        - performance
-        - health
-        - security
 
   # Triggered by external monitoring systems
   repository_dispatch:

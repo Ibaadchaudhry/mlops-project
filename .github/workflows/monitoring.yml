@@ -1,14 +1,7 @@
 name: Monitoring and Drift Detection
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'drift_detector.py'
-      - 'monitoring/**'
 
 jobs:
   system-monitoring:

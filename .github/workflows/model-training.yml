@@ -2,17 +2,6 @@ name: Model Training Pipeline
 
 on:
   workflow_dispatch:
-    inputs:
-      rounds:
-        description: 'Number of training rounds'
-        required: true
-        default: '5'
-      clients:
-        description: 'Number of clients'
-        required: true
-        default: '3'
-  schedule:
-    - cron: '0 2 * * 0'  # Weekly on Sunday at 2 AM
 
 jobs:
   check-conditions:
